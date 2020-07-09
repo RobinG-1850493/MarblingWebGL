@@ -1,0 +1,13 @@
+body {
+    margin:  0;
+    background-color: black;
+    color: white;
+}
+#main-canvas-div{
+    display: block;
+    margin-top: 25px;
+    margin-left: 25px;
+    width: 800px;
+    height: 800px;
+    border: solid 2px white;
+}
