@@ -1,0 +1,13 @@
+<component name="libraryTable">
+  <library name="lightgl" type="javaScript">
+    <properties>
+      <sourceFilesUrls>
+        <item url="file://$PROJECT_DIR$/javascript/lightgl.js" />
+      </sourceFilesUrls>
+    </properties>
+    <CLASSES>
+      <root url="file://$PROJECT_DIR$/javascript/lightgl.js" />
+    </CLASSES>
+    <SOURCES />
+  </library>
+</component>
