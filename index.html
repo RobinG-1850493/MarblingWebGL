@@ -3,16 +3,17 @@
 <link rel="stylesheet" type="text/css" href="css/style.css">
 <script src="javascript/lightgl.js"></script>
 <script src="javascript/fluid_simulation.js"></script>
+<script src="javascript/dat.gui.min.js"></script>
 <head>
     <meta charset="UTF-8">
     <title>Marbling - WebGL Fluid Simulation</title>
 </head>
-<body>
+<body id="main-body">
 <div id="main-canvas-div">
-<canvas id="main-canvas" width="800" height="800"></canvas>
+<canvas id="main-canvas"></canvas>
 </div>
 </body>
-<script>
+<script type="text/javascript">
     new marbling();
 </script>
 </html>

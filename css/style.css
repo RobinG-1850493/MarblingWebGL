@@ -3,11 +3,15 @@ body {
     background-color: black;
     color: white;
 }
+#main-canvas{
+    display: block;
+    border: solid 2px white;
+    width: 99vw;
+    height: 99vh;
+}
 #main-canvas-div{
     display: block;
-    margin-top: 25px;
-    margin-left: 25px;
-    width: 800px;
-    height: 800px;
-    border: solid 2px white;
+    width: 100%;
+    height: 100%;
+    float: left;
 }
