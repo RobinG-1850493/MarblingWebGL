@@ -1,7 +1,8 @@
 window.marbling = function () {
 
     var marb_canvas = document.getElementById("main-canvas");
-    var gl = GL.create(marb_canvas); // create a new webgl context (lightgl) --  http://evanw.github.io/lightgl.js/docs/main.html
+    var gl = GL.create(marb_canvas, { preserveDrawingBuffer: true }); // create a new webgl context (lightgl) --  http://evanw.github.io/lightgl.js/docs/main.html
+    console.log(gl.keys);
 
     // Set canvas dimensions
     gl.canvas.width = marb_canvas.offsetWidth;
@@ -23,6 +24,7 @@ window.marbling = function () {
         splosch_multiple: false,
         splosch_count: 1,
         splosch_spacing: 0.1,
+        velocity_splosch: false,
         random_amount: 5,
         random_direction: true,
         random_color: false,
@@ -263,10 +265,10 @@ window.marbling = function () {
     // GUI
     var optionsMenu = function () {
         var gui = new dat.GUI;
-        gui.width = 400;
+        gui.width = 600;
 
-        gui.add(options, "animate").name("Animate").listen();
-        gui.add(options, "advect").name("Advect").listen();
+        gui.add(options, "animate").name("Animate (Shortcut: P)").listen();
+        gui.add(options, "advect").name("Advect (Shortcut: A)").listen();
 
         gui.add(options, "density", 0.1, 2, 0.1).name("Density");
         gui.add(options, "timestep", 1, 240, 1).name("Time step");
@@ -282,7 +284,21 @@ window.marbling = function () {
 
         splosch.add({ rand: () => {
             randomSplosches(options.random_amount);
-        }}, "rand").name("Create random splosches");
+        }}, "rand").name("Create random splosches (Shortcut: S)");
+
+        gui.add({ suspend: () => {
+            suspendVelocity();
+            }}, "suspend").name("Suspend movement (Shortcut: F)");
+
+        gui.add(options, "velocity_splosch").name("Velocity splosch (no color)");
+
+        gui.add({ reset: () => {
+            restartSim();
+            }}, "reset").name("Reset (Shortcut: R)");
+
+        gui.add({ screenshot: () => {
+            screenshot();
+            }}, "screenshot").name("Take screenshot (Shortcut: T)");
     };
 
     // Eventlisteners
@@ -297,6 +313,15 @@ window.marbling = function () {
         if (ev.key === "r") {
             restartSim();
         }
+        if (ev.key === "s") {
+            randomSplosches(options.random_amount);
+        }
+        if(ev.key === "f") {
+            suspendVelocity();
+        }
+        if(ev.key === "t"){
+            screenshot();
+        }
     })
 
     optionsMenu();
@@ -306,12 +331,31 @@ window.marbling = function () {
         color_tex0.drawTo(setColorShader(0, 0, 0, 0));
     }
 
+    function createDownload (fn, url) {
+        var temp = document.createElement('a');
+        temp.download = fn;
+        temp.href = url;
+        document.body.appendChild(temp);
+        temp.click();
+        document.body.removeChild(temp);
+    }
+
+    var screenshot = function(){
+        var data = marb_canvas.toDataURL('image/png');
+        createDownload("marbling_capture.png", data);
+    }
+
     restartSim()
 
     gl.ondraw = function () {
         gl.clearColor(1, 1, 1, 0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         drawTexture(color_tex0);
+    }
+
+    var suspendVelocity = function(){
+        velocity_tex0 = new gl.Texture(WIDTH, HEIGHT, {type: gl.FLOAT});
+
     }
 
     gl.onupdate = function () {
@@ -372,7 +416,12 @@ window.marbling = function () {
             console.log(ev.deltaY);
             console.log(ev.offsetX);
             console.log(ev.offsetY);
-            addSplosch(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY, color);
+            if(options.velocity_splosch){
+                velocitySplosch(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY);
+            }
+            else{
+                addSplosch(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY, color);
+            }
         }
     }
 
@@ -401,6 +450,21 @@ window.marbling = function () {
         swap = swapTexture(color_tex0, color_tex1);
         color_tex0 = swap.t1;
         color_tex1 = swap.t2;
+    }
+
+    var velocitySplosch = function (x, y, offsetX, offsetY){
+        velocity_tex1.drawTo(function () {
+            splosch(
+                velocity_tex0,
+                [10.0 * x / WIDTH, -10.0 * y / HEIGHT, 0.0, 0.0],
+                [offsetX / WIDTH, 1.0 - offsetY / HEIGHT],
+                options.splosch_radius / 1000
+            );
+        });
+
+        swap = swapTexture(velocity_tex0, velocity_tex1);
+        velocity_tex0 = swap.t1;
+        velocity_tex1 = swap.t2;
     }
 
     var randomSplosches = function(amount) {
