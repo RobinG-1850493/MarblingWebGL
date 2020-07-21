@@ -1,8 +1,7 @@
 window.marbling = function () {
 
     var marb_canvas = document.getElementById("main-canvas");
-    var gl = GL.create(marb_canvas, { preserveDrawingBuffer: true }); // create a new webgl context (lightgl) --  http://evanw.github.io/lightgl.js/docs/main.html
-    console.log(gl.keys);
+    var gl = GL.create(marb_canvas, {preserveDrawingBuffer: true}); // create a new webgl context (lightgl) --  http://evanw.github.io/lightgl.js/docs/main.html
 
     // Set canvas dimensions
     gl.canvas.width = marb_canvas.offsetWidth;
@@ -11,23 +10,41 @@ window.marbling = function () {
     var WIDTH = marb_canvas.offsetWidth;
     var HEIGHT = marb_canvas.offsetHeight;
 
+    var tWidthSize = 1.0 / WIDTH;
+    var tHeightSize = 1.0 / HEIGHT;
+
     var swap = null;
 
     // option values
     var options = {
         animate: true,
         advect: true,
+        advection_interpolation: true,
+        pressure: true,
+        vorticity: true,
         density: 1.0,
+        curl: 35.0,
+        timescale: 1.5,
+        dissapation_factor: 0.0,
         timestep: 144.0,
-        splosch_radius: 1,
+        splosch_radius: 0.25,
         splosch_color: [145, 1.0, 1.0, 0.0],
         splosch_multiple: false,
         splosch_count: 1,
         splosch_spacing: 0.1,
         velocity_splosch: false,
+        rake: false,
         random_amount: 5,
         random_direction: true,
         random_color: false,
+    }
+
+    // rake options
+    var rakeOptions = {
+        rowCount: 1,
+        colCount: 1,
+        rowSpacing: 100,
+        colSpacing: 100,
     }
 
     // Set viewport, x & y are 0 (lower left corner)
@@ -48,15 +65,19 @@ window.marbling = function () {
     var div_tex0 = new gl.Texture(WIDTH, HEIGHT, {type: gl.FLOAT});
     var press_tex0 = new gl.Texture(WIDTH, HEIGHT, {type: gl.FLOAT});
     var press_tex1 = new gl.Texture(WIDTH, HEIGHT, {type: gl.FLOAT});
+    var curl_tex0 = new gl.Texture(WIDTH, HEIGHT, {type: gl.FLOAT});
+    var vort_tex0 = new gl.Texture(WIDTH, HEIGHT, {type: gl.FLOAT});
+    var boundary = new gl.Texture(WIDTH, HEIGHT, {type: gl.FLOAT});
 
-    var getRandom = function(min, max){
-        return Math.floor(Math.random() * (max-min) + min);
+    var getRandom = function (min, max) {
+        return Math.floor(Math.random() * (max - min) + min);
     }
 
     // Shaders GLSL -- https://webglfundamentals.org/webgl/lessons/webgl-shaders-and-glsl.html
     // http://developer.download.nvidia.com/books/HTML/gpugems/gpugems_ch38.html
 
     var vertex = '\
+    \
         varying vec2 xy;   \
         void main() {   \
             xy = gl_TexCoord.xy;  \
@@ -74,15 +95,15 @@ window.marbling = function () {
 
     var sploschShader = new gl.Shader(vertex, '\
       uniform vec4 change; \
-      uniform vec2 center; \
+      uniform vec2 coordinate; \
       uniform float radius; \
       uniform sampler2D tex; \
       \
       varying vec2 xy; \
       \
       void main() { \
-        float dx = center.x - xy.x; \
-        float dy = center.y - xy.y; \
+        float dx = coordinate.x - xy.x; \
+        float dy = coordinate.y - xy.y; \
         vec4 cur = texture2D(tex, xy); \
         gl_FragColor = cur + change * exp(-(dx * dx + dy * dy) / radius); \
       } \
@@ -90,37 +111,155 @@ window.marbling = function () {
 
     var advectionShader = new gl.Shader(vertex, '\
       uniform float timestep; \
+      uniform float dissapation_factor;\
+      uniform float gridWidth;\
+      uniform float gridHeight;\
       uniform sampler2D tex; \
       uniform sampler2D velocity_tex; \
+      \
       varying vec2 xy; \
       \
       void main() { \
+        vec2 gridSize = vec2(1.0/gridWidth, 1.0/gridHeight);\
         vec2 u = texture2D(velocity_tex, xy).xy; \
         \
-        vec2 pastCoord = fract(xy - (0.5 * timestep * u)); \
-        gl_FragColor = texture2D(tex, pastCoord); \
+        vec2 pastCoord = xy - (timestep * u); \
+        float dissapation = 1.0 + dissapation_factor * timestep;\
+        gl_FragColor = texture2D(tex, pastCoord) / dissapation; \
       } \
     ');
+
+    var advectionInterpolationShader = new gl.Shader(vertex, '\
+      uniform float timestep; \
+      uniform float dissapation_factor;\
+      uniform float gridWidth;\
+      uniform float gridHeight;\
+      uniform float timeScale;\
+      uniform sampler2D tex; \
+      uniform sampler2D velocity_tex; \
+      \
+      varying vec2 xy; \
+      \
+      vec4 bilinear_interpolation(sampler2D tex, vec2 xy) {\
+        vec2 gridSize = vec2(1.0/gridWidth, 1.0/gridHeight);\
+        vec2 vxy = xy / gridSize - 0.5; \
+      \
+        vec2 ixy = floor(vxy);\
+        vec2 fxy = fract(vxy);\
+        \
+        vec4 a = texture2D(tex, (ixy + vec2(0.5, 0.5)) * gridSize);\
+        vec4 b = texture2D(tex, (ixy + vec2(1.5, 0.5)) * gridSize);\
+        vec4 c = texture2D(tex, (ixy + vec2(0.5, 1.5)) * gridSize);\
+        vec4 d = texture2D(tex, (ixy + vec2(1.5, 1.5)) * gridSize);\
+        \
+        return mix(mix(a, b, fxy.x), mix(c, d, fxy.x), fxy.y);\
+      }\
+      \
+      void main() { \
+        vec2 gridSize = vec2(1.0/1667.0, 1.0/941.0);\
+        vec2 u = bilinear_interpolation(velocity_tex, xy).xy; \
+        \
+        vec2 pastCoord = xy - (timeScale * timestep * u); \
+        float test = 1.0 + dissapation_factor * timestep;\
+        gl_FragColor = texture2D(tex, pastCoord) / test; \
+      } \
+    ');
+
+    var curlShader = new gl.Shader(vertex, '\
+        uniform sampler2D vel_tex;\
+        uniform float gridWidth;\
+        uniform float gridHeight;\
+        \
+        varying vec2 xy;\
+        \
+        void main() {\
+            vec2 left = xy - vec2(gridWidth, 0.0);\
+            vec2 right = xy + vec2(gridWidth, 0.0);\
+            vec2 top = xy + vec2(0.0, gridHeight);\
+            vec2 bottom = xy - vec2(0.0, gridHeight);\
+            \
+            float l = texture2D(vel_tex, left).y;\
+            float r = texture2D(vel_tex, right).y;\
+            float t = texture2D(vel_tex, top).x;\
+            float b = texture2D(vel_tex, bottom).x;\
+            \
+            float vorticity = r - l - t + b;\
+            gl_FragColor = vec4(0.5 * vorticity, 0.0, 0.0, 1.0);\
+        }\
+    ');
+
+    var vorticityShader = new gl.Shader(vertex, '\
+        uniform sampler2D curl_tex;\
+        uniform sampler2D vel_tex;\
+        uniform float timestep;\
+        uniform float curl;\
+        uniform float gridWidth;\
+        uniform float gridHeight;\
+        \
+        varying vec2 xy;\
+        \
+        void main() {\
+            vec2 left = xy - vec2(gridWidth, 0.0);\
+            vec2 right = xy + vec2(gridWidth, 0.0);\
+            vec2 top = xy + vec2(0.0, gridHeight);\
+            vec2 bottom = xy - vec2(0.0, gridHeight);\
+            \
+            float l = texture2D(curl_tex, left).x;\
+            float r = texture2D(curl_tex, right).x;\
+            float t = texture2D(curl_tex, top).x;\
+            float b = texture2D(curl_tex, bottom).x;\
+            \
+            float curr = texture2D(curl_tex, xy).x;\
+            \
+            vec2 force = 0.5 * vec2(abs(t) - abs(b), abs(r) - abs(l));\
+            force /= length(force) + 0.0001;\
+            force *= curl * curr;\
+            force.y *= -1.0;\
+            \
+            vec2 vel = texture2D(vel_tex, xy).xy;\
+            vel += force * (timestep*4.0);\
+            vel = min(max(vel, -1000.0), 1000.0);\
+            gl_FragColor = vec4(vel, 0.0, 1.0);\
+        }\
+    ')
 
     var divergenceShader = new gl.Shader(vertex, '\
       uniform float timestep; \
       uniform float density; \
-      uniform float dist; \
+      uniform float gridWidth; \
+      uniform float gridHeight; \
       uniform sampler2D vel_tex; \
       \
       varying vec2 xy; \
       \
       vec2 u(vec2 coord) { \
-        return texture2D(vel_tex, fract(coord)).xy; \
+        return texture2D(vel_tex, coord).xy; \
       } \
       \
       void main() { \
-        gl_FragColor = vec4((-2.0 * dist * density / timestep) * ( \
-          (u(xy + vec2(dist, 0)).x - \
-           u(xy - vec2(dist, 0)).x) \
+      \
+        vec2 left = xy - vec2(gridWidth, 0.0);\
+        vec2 right = xy + vec2(gridWidth, 0.0);\
+        vec2 top = xy + vec2(0.0, gridWidth);\
+        vec2 bottom = xy - vec2(0.0, gridWidth);\
+        \
+        float l = texture2D(vel_tex, left).x;\
+        float r = texture2D(vel_tex, right).x;\
+        float t = texture2D(vel_tex, top).y;\
+        float b = texture2D(vel_tex, bottom).y;\
+        \
+        vec2 curr = texture2D(vel_tex, xy).xy;\
+        \
+        if(left.x < 0.0){ l = -curr.x; }\
+        if(right.x > 1.0){ r = -curr.x; }\
+        if(top.y > 1.0){ t = -curr.y; }\
+        if(bottom.y < 0.0){ b = -curr.y; }\
+        \
+        \
+        gl_FragColor = vec4((-2.0 * gridWidth * density / timestep) * ( \
+          (r - l) \
           + \
-          (u(xy + vec2(0, dist)).y - \
-           u(xy - vec2(0, dist)).y) \
+          (t - b) \
         ), 0.0, 0.0, 1.0); \
       } \
     ');
@@ -133,11 +272,11 @@ window.marbling = function () {
       varying vec2 xy; \
       \
       float divergence(vec2 coord) { \
-        return texture2D(div_tex, fract(coord)).x; \
+        return texture2D(div_tex, coord).x; \
       } \
       \
       float pressure(vec2 coord) { \
-        return texture2D(press_tex, fract(coord)).x; \
+        return texture2D(press_tex, coord).x; \
       } \
       \
       void main() { \
@@ -161,21 +300,21 @@ window.marbling = function () {
       varying vec2 xy; \
       \
       float p(vec2 coord) { \
-        return texture2D(press_tex, fract(coord)).x; \
+        return texture2D(press_tex, coord).x; \
       } \
       \
       void main() { \
-        vec2 u_a = texture2D(vel_tex, xy).xy; \
+        vec2 curr = texture2D(vel_tex, xy).xy; \
         \
         float diff_p_x = (p(xy + vec2(dist, 0.0)) - \
                           p(xy - vec2(dist, 0.0))); \
-        float u_x = u_a.x - timestep/(2.0 * density * dist) * diff_p_x; \
+        float x = curr.x - timestep/(1.0 * density * dist) * diff_p_x; \
         \
         float diff_p_y = (p(xy + vec2(0.0, dist)) - \
                           p(xy - vec2(0.0, dist))); \
-        float u_y = u_a.y - timestep/(2.0 * density * dist) * diff_p_y; \
+        float y = curr.y - timestep/(1.0 * density * dist) * diff_p_y; \
         \
-        gl_FragColor = vec4(u_x, u_y, 0.0, 0.0); \
+        gl_FragColor = vec4(x, y, 0.0, 0.0); \
       } \
     ');
 
@@ -191,8 +330,6 @@ window.marbling = function () {
         var colorShader = new gl.Shader(vertex, '\
             varying vec2 xy; \
             void main() { \
-                float x = 2.0 * xy.x - 1.0; \
-                float y = 2.0 * xy.y - 1.0; \
                 gl_FragColor = vec4(' + [r, g, b, a].join(',') + '); \
             } \
         ');
@@ -202,23 +339,63 @@ window.marbling = function () {
         };
     }
 
-    var advect = function (tex, velocity) {
+    var advect = function (tex, velocity, interpolation) {
         tex.bind(0);
         velocity.bind(1);
-
-        advectionShader.uniforms({
-            timestep: 1 / options.timestep,
-            tex: 0,
-            velocity_tex: 1
-        });
-        advectionShader.draw(mesh, gl.TRIANGLE_STRIP);
+        if(interpolation){
+            advectionInterpolationShader.uniforms({
+                timestep: 1 / options.timestep,
+                dissapation_factor: options.dissapation_factor,
+                gridWidth: WIDTH,
+                gridHeight: HEIGHT,
+                timeScale: options.timescale,
+                tex: 0,
+                velocity_tex: 1
+            });
+            advectionInterpolationShader.draw(mesh, gl.TRIANGLE_STRIP);
+        }
+        else{
+            advectionShader.uniforms({
+                timestep: 1 / options.timestep,
+                dissapation_factor: options.dissapation_factor,
+                gridWidth: WIDTH,
+                gridHeight: HEIGHT,
+                tex: 0,
+                velocity_tex: 1
+            });
+            advectionShader.draw(mesh, gl.TRIANGLE_STRIP);
+        }
     };
 
-    var splosch = (function (tex, change, center, radius) {
+    var curl = (function(vel_tex){
+        vel_tex.bind(0);
+        curlShader.uniforms({
+            vel_tex: 0,
+            gridWidth: 1 / WIDTH,
+            gridHeight: 1 / HEIGHT,
+        });
+        curlShader.draw(mesh, gl.TRIANGLE_STRIP);
+    });
+
+    var vorticity = (function(curl_tex, vel_tex){
+        curl_tex.bind(0);
+        vel_tex.bind(1);
+        vorticityShader.uniforms({
+            curl_tex: 0,
+            vel_tex: 1,
+            curl: options.curl,
+            gridWidth: 1 / WIDTH,
+            gridHeight: 1 / HEIGHT,
+            timestep: 1 / options.timestep,
+        });
+        vorticityShader.draw(mesh, gl.TRIANGLE_STRIP);
+    });
+
+    var splosch = (function (tex, change, coordinate, radius) {
         tex.bind(0);
         sploschShader.uniforms({
             change: change,
-            center: center,
+            coordinate: coordinate,
             radius: radius,
             tex: 0
         });
@@ -230,7 +407,8 @@ window.marbling = function () {
         divergenceShader.uniforms({
             vel_tex: 0,
             density: options.density,
-            dist: 0.5 / WIDTH,
+            gridWidth: 1 / WIDTH,
+            gridHeight: 1 / HEIGHT,
             timestep: 1 / options.timestep
         });
         divergenceShader.draw(mesh, gl.TRIANGLE_STRIP);
@@ -269,9 +447,16 @@ window.marbling = function () {
 
         gui.add(options, "animate").name("Animate (Shortcut: P)").listen();
         gui.add(options, "advect").name("Advect (Shortcut: A)").listen();
+        gui.add(options, "advection_interpolation").name("Advection Interpolation").listen();
+        gui.add(options, "pressure").name("Pressure (Shortcut: Y)").listen();
+        gui.add(options, "vorticity").name("Vorticity").listen();
 
         gui.add(options, "density", 0.1, 2, 0.1).name("Density");
-        gui.add(options, "timestep", 1, 240, 1).name("Time step");
+        gui.add(options, "dissapation_factor", 0.0, 1.0, 0.1).name("Dissapation");
+        gui.add(options, "curl", 0.0, 40.0, 1).name("Vorticity");
+        gui.add(options, "timescale", 0.25, 2.0, 0.25).name("timescale");
+
+        //gui.add(options, "timestep", 1, 240, 1).name("Time step");
 
         var splosch = gui.addFolder("Splosch Options");
         splosch.open();
@@ -282,23 +467,41 @@ window.marbling = function () {
         splosch.add(options, "random_color").name("Random Colors");
         splosch.add(options, "random_direction").name("Random Direction");
 
-        splosch.add({ rand: () => {
-            randomSplosches(options.random_amount);
-        }}, "rand").name("Create random splosches (Shortcut: S)");
+        splosch.add({
+            rand: () => {
+                randomSplosches(options.random_amount);
+            }
+        }, "rand").name("Create random splosches (Shortcut: S)");
 
-        gui.add({ suspend: () => {
-            suspendVelocity();
-            }}, "suspend").name("Suspend movement (Shortcut: F)");
+        gui.add({
+            suspend: () => {
+                suspendVelocity();
+            }
+        }, "suspend").name("Suspend movement (Shortcut: F)");
 
         gui.add(options, "velocity_splosch").name("Velocity splosch (no color)");
 
-        gui.add({ reset: () => {
-            restartSim();
-            }}, "reset").name("Reset (Shortcut: R)");
+        gui.add({
+            reset: () => {
+                restartSim();
+            }
+        }, "reset").name("Reset (Shortcut: R)");
 
-        gui.add({ screenshot: () => {
-            screenshot();
-            }}, "screenshot").name("Take screenshot (Shortcut: T)");
+        gui.add({
+            screenshot: () => {
+                screenshot();
+            }
+        }, "screenshot").name("Take screenshot (Shortcut: T)");
+
+
+        gui.add(options, "rake").name("Enable Rake");
+
+        var rake = gui.addFolder("Rake Options");
+        rake.add(rakeOptions, "rowCount", 1, 7, 1).name("Rake rows");
+        rake.add(rakeOptions, "colCount", 1, 7, 1).name("Rake columns");
+        rake.add(rakeOptions, "rowSpacing", 50, 500, 25).name("Rake row spacing");
+        rake.add(rakeOptions, "colSpacing", 50, 500, 25).name("Rake column spacing");
+
     };
 
     // Eventlisteners
@@ -310,16 +513,19 @@ window.marbling = function () {
         if (ev.key === "a") {
             options.advect = !options.advect;
         }
+        if (ev.key === "y") {
+            options.pressure = !options.pressure;
+        }
         if (ev.key === "r") {
             restartSim();
         }
         if (ev.key === "s") {
             randomSplosches(options.random_amount);
         }
-        if(ev.key === "f") {
+        if (ev.key === "f") {
             suspendVelocity();
         }
-        if(ev.key === "t"){
+        if (ev.key === "t") {
             screenshot();
         }
     })
@@ -327,11 +533,11 @@ window.marbling = function () {
     optionsMenu();
 
     var restartSim = function () {
-        velocity_tex0.drawTo(setColorShader(0, 0, 0, 0));
-        color_tex0.drawTo(setColorShader(0, 0, 0, 0));
+        velocity_tex0.drawTo(setColorShader(0, 0, 0, 1));
+        color_tex0.drawTo(setColorShader(0.0, 0.0, 0.0, 0));
     }
 
-    function createDownload (fn, url) {
+    function createDownload(fn, url) {
         var temp = document.createElement('a');
         temp.download = fn;
         temp.href = url;
@@ -340,7 +546,7 @@ window.marbling = function () {
         document.body.removeChild(temp);
     }
 
-    var screenshot = function(){
+    var screenshot = function () {
         var data = marb_canvas.toDataURL('image/png');
         createDownload("marbling_capture.png", data);
     }
@@ -349,48 +555,62 @@ window.marbling = function () {
 
     gl.ondraw = function () {
         gl.clearColor(1, 1, 1, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.clear(gl.COLOR_BUFFER_BIT, gl.DEPTH_BUFFER_BIT);
         drawTexture(color_tex0);
     }
 
-    var suspendVelocity = function(){
+    var suspendVelocity = function () {
         velocity_tex0 = new gl.Texture(WIDTH, HEIGHT, {type: gl.FLOAT});
-
     }
 
     gl.onupdate = function () {
         if (options.animate) {
             if (options.advect) {
                 velocity_tex1.drawTo(function () {
-                    advect(velocity_tex0, velocity_tex0);
+                    advect(velocity_tex0, velocity_tex0, options.advection_interpolation);
                 });
                 swap = swapTexture(velocity_tex0, velocity_tex1);
                 velocity_tex0 = swap.t1;
                 velocity_tex1 = swap.t2;
 
-                div_tex0.drawTo(function () {
-                    divergence(velocity_tex0);
-                });
+                if(options.pressure){
+                    if(options.vorticity){
+                        console.log("reached");
+                        curl_tex0.drawTo(function(){
+                            curl(velocity_tex0);
+                        });
 
-                for (var i = 0; i < 10; i++) {
-                    press_tex1.drawTo(function () {
-                        pressure(div_tex0, press_tex0);
+                        vort_tex0.drawTo(function(){
+                            vorticity(curl_tex0, velocity_tex0);
+                        });
+                    }
+                    else{
+                        vort_tex0 = velocity_tex0;
+                    }
+
+                    div_tex0.drawTo(function () {
+                        divergence(vort_tex0);
                     });
-                    swap = swapTexture(press_tex0, press_tex1);
-                    press_tex0 = swap.t1;
-                    press_tex1 = swap.t2;
+				
+                    for (var i = 0; i < 10; i++) {
+                        press_tex1.drawTo(function () {
+                            pressure(div_tex0, press_tex0);
+                        });
+                        swap = swapTexture(press_tex0, press_tex1);
+                        press_tex0 = swap.t1;
+                        press_tex1 = swap.t2;
+                    }
+
+                    velocity_tex1.drawTo(function () {
+                        subtractPressureGradient(velocity_tex0, press_tex0);
+                    });
+                    swap = swapTexture(velocity_tex0, velocity_tex1);
+                    velocity_tex0 = swap.t1;
+                    velocity_tex1 = swap.t2;
                 }
 
-                velocity_tex1.drawTo(function () {
-                    subtractPressureGradient(velocity_tex0, press_tex0);
-                });
-                swap = swapTexture(velocity_tex0, velocity_tex1);
-                velocity_tex0 = swap.t1;
-                velocity_tex1 = swap.t2;
-
-
                 color_tex1.drawTo(function () {
-                    advect(color_tex0, velocity_tex0);
+                    advect(color_tex0, velocity_tex0, options.advection_interpolation);
                 });
                 swap = swapTexture(color_tex0, color_tex1);
                 color_tex0 = swap.t1;
@@ -408,39 +628,56 @@ window.marbling = function () {
         return {t1, t2};
     }
 
+
+    // Splosch functions
     var dragSplosch = function (ev) {
-        var color = [options.splosch_color[0] / 510, options.splosch_color[1] / 510, options.splosch_color[2] / 510]
         //var color = [0.001, 0.001, 0.001];
         if (ev.dragging) {
-            console.log(ev.deltaX);
+            /*console.log(ev.deltaX);
             console.log(ev.deltaY);
             console.log(ev.offsetX);
-            console.log(ev.offsetY);
-            if(options.velocity_splosch){
+            console.log(ev.offsetY);*/
+            if (options.velocity_splosch) {
                 velocitySplosch(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY);
-            }
-            else{
-                addSplosch(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY, color);
+            } else if (options.rake) {
+                rake(rakeOptions.rowCount, rakeOptions.colCount, rakeOptions.rowSpacing, rakeOptions.colSpacing, ev);
+            } else {
+                addSplosch(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY);
             }
         }
     }
 
-    var addSplosch = function (x, y, offsetX, offsetY, color) {
+    function random_rgba() {
+        var o = Math.round, r = Math.random, s = 255;
+        return  [o(r()*s)/510, o(r()*s)/510, o(r()*s)/510];
+    }
 
+    var addSplosch = function (x, y, offsetX, offsetY) {
+        if (options.random_color) {
+            var randR = getRandom(1, 255);
+            var randG = getRandom(1, 255);
+            var randB = getRandom(1, 255);
+
+
+            color = random_rgba();
+            console.log(color);
+        } else {
+            color = [options.splosch_color[0] / 510, options.splosch_color[1] / 510, options.splosch_color[2] / 510]
+        }
         velocity_tex1.drawTo(function () {
             splosch(
                 velocity_tex0,
                 [10.0 * x / WIDTH, -10.0 * y / HEIGHT, 0.0, 0.0],
                 [offsetX / WIDTH, 1.0 - offsetY / HEIGHT],
-                options.splosch_radius / 1000
+                options.splosch_radius / 500
             );
         });
         color_tex1.drawTo(function () {
             splosch(
                 color_tex0,
-                color.concat([0.0]),
+                color.concat([1]),
                 [offsetX / WIDTH, 1.0 - offsetY / HEIGHT],
-                options.splosch_radius / 1000
+                options.splosch_radius / 500
             );
         });
         swap = swapTexture(velocity_tex0, velocity_tex1);
@@ -452,13 +689,13 @@ window.marbling = function () {
         color_tex1 = swap.t2;
     }
 
-    var velocitySplosch = function (x, y, offsetX, offsetY){
+    var velocitySplosch = function (x, y, offsetX, offsetY) {
         velocity_tex1.drawTo(function () {
             splosch(
                 velocity_tex0,
                 [10.0 * x / WIDTH, -10.0 * y / HEIGHT, 0.0, 0.0],
                 [offsetX / WIDTH, 1.0 - offsetY / HEIGHT],
-                options.splosch_radius / 1000
+                options.splosch_radius / 500
             );
         });
 
@@ -467,50 +704,80 @@ window.marbling = function () {
         velocity_tex1 = swap.t2;
     }
 
-    var randomSplosches = function(amount) {
-        var color = [0.0,0.0,0.0];
+    var randomSplosches = function (amount) {
         var randWidth = 0;
         var randHeight = 0;
         var randXDir = 0;
         var randYDir = 0;
 
-        for(var i = 0; i < amount; i++){
-            if(options.random_color){
-                var randR = getRandom(1, 255);
-                var randG = getRandom(1, 255);
-                var randB = getRandom(1, 255);
-
-
-                color = [randR / 637.5, randG / 637.5, randB / 637.5];
-                console.log(color);
-            }
-            else{
-                color = [options.splosch_color[0] / 510, options.splosch_color[1] / 510, options.splosch_color[2] / 510]
-            }
-
-            randWidth = getRandom(50, WIDTH-50);
-            randHeight = getRandom(50, HEIGHT-50);
+        for (var i = 0; i < amount; i++) {
+            randWidth = getRandom(50, WIDTH - 50);
+            randHeight = getRandom(50, HEIGHT - 50);
 
             var length = getRandom(4, 40);
 
-            if(options.random_direction){
+            if (options.random_direction) {
                 randXDir = getRandom(-4, 4);
                 randYDir = getRandom(-4, 4);
             }
 
-            for(var j = 0; j < length; j+=2){
-                addSplosch(randXDir, randYDir, randWidth+j, randHeight+j, color);
+            for (var j = 0; j < length; j += 2) {
+                addSplosch(randXDir, randYDir, randWidth + j, randHeight + j);
             }
 
         }
     }
 
-    gl.onmousedown = function (mousedownEvent) {
-        dragSplosch(mousedownEvent)
-        gl.onmousemove = function (mousemoveEvent) {
-            dragSplosch(mousemoveEvent);
+    // Rake & Comb utils
+    var rake = function (rowCount, colCount, rowSpacing, colSpacing, event) {
+        var rowPerSide = 0;
+        var colPerSide = 0;
+
+        if(rowCount == 1){
+            rowPerSide = rowCount;
+        } else {
+            rowPerSide = (rowCount - 1) / 2;
+        }
+
+        if (colCount == 1) {
+            colPerSide = colCount;
+        } else {
+            colPerSide = (colCount - 1) / 2;
+        }
+
+        if(rowCount == 1){
+            if(colCount == 1){
+                addSplosch(event.deltaX, event.deltaY, event.offsetX, event.offsetY);
+            } else {
+                for (var j = -colPerSide; j <= colPerSide; j++) {
+                    if ((colCount % 2) == 0 && j == 0) { continue }
+                    addSplosch(event.deltaX, event.deltaY, event.offsetX + (j * colSpacing), event.offsetY);
+                }
+            }
+
+        }
+        else{
+            for (var i = -rowPerSide; i <= rowPerSide; i++) {
+                if ((rowCount % 2) == 0 && i == 0) { continue }
+                if(colCount == 1){
+                    addSplosch(event.deltaX, event.deltaY, event.offsetX, event.offsetY + (i * rowSpacing));
+                }
+                else{
+                    for (var j = -colPerSide; j <= colPerSide; j++) {
+                        if ((colCount % 2) == 0 && j == 0) { continue }
+                        addSplosch(event.deltaX, event.deltaY, event.offsetX + (j * colSpacing), event.offsetY + (i * rowSpacing));
+                    }
+                }
+            }
         }
     }
 
-    gl.animate();
+gl.onmousedown = function (mousedownEvent) {
+    dragSplosch(mousedownEvent)
+    gl.onmousemove = function (mousemoveEvent) {
+        dragSplosch(mousemoveEvent);
+    }
+}
+
+gl.animate();
 }
