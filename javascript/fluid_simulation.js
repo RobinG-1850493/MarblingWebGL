@@ -10,6 +10,8 @@ window.marbling = function () {
     var WIDTH = marb_canvas.offsetWidth;
     var HEIGHT = marb_canvas.offsetHeight;
 
+    var lastFrameTime = Date.now();
+
     var tWidthSize = 1.0 / WIDTH;
     var tHeightSize = 1.0 / HEIGHT;
 
@@ -26,7 +28,8 @@ window.marbling = function () {
         curl: 35.0,
         timescale: 1.5,
         dissapation_factor: 0.0,
-        timestep: 144.0,
+        timestep: 0.0166,
+        fps: 60.0,
         splosch_radius: 0.25,
         splosch_color: [145, 1.0, 1.0, 0.0],
         splosch_multiple: false,
@@ -120,10 +123,9 @@ window.marbling = function () {
       varying vec2 xy; \
       \
       void main() { \
-        vec2 gridSize = vec2(1.0/gridWidth, 1.0/gridHeight);\
-        vec2 u = texture2D(velocity_tex, xy).xy; \
+        vec2 velocity = texture2D(velocity_tex, xy).xy; \
         \
-        vec2 pastCoord = xy - (timestep * u); \
+        vec2 pastCoord = xy - (timestep * velocity); \
         float dissapation = 1.0 + dissapation_factor * timestep;\
         gl_FragColor = texture2D(tex, pastCoord) / dissapation; \
       } \
@@ -143,7 +145,7 @@ window.marbling = function () {
       vec4 bilinear_interpolation(sampler2D tex, vec2 xy) {\
         vec2 gridSize = vec2(1.0/gridWidth, 1.0/gridHeight);\
         vec2 vxy = xy / gridSize - 0.5; \
-      \
+        \
         vec2 ixy = floor(vxy);\
         vec2 fxy = fract(vxy);\
         \
@@ -160,8 +162,8 @@ window.marbling = function () {
         vec2 u = bilinear_interpolation(velocity_tex, xy).xy; \
         \
         vec2 pastCoord = xy - (timeScale * timestep * u); \
-        float test = 1.0 + dissapation_factor * timestep;\
-        gl_FragColor = texture2D(tex, pastCoord) / test; \
+        float dissapation = 1.0 + dissapation_factor * timestep;\
+        gl_FragColor = texture2D(tex, pastCoord) / dissapation; \
       } \
     ');
 
@@ -211,14 +213,14 @@ window.marbling = function () {
             \
             float curr = texture2D(curl_tex, xy).x;\
             \
-            vec2 force = 0.5 * vec2(abs(t) - abs(b), abs(r) - abs(l));\
-            force /= length(force) + 0.0001;\
-            force *= curl * curr;\
+            vec2 force = vec2(abs(t) - abs(b), abs(r) - abs(l));\
+            force /= length(force) + 0.00001;\
+            force *= (curl) * curr;\
             force.y *= -1.0;\
             \
             vec2 vel = texture2D(vel_tex, xy).xy;\
-            vel += force * (timestep*4.0);\
-            vel = min(max(vel, -1000.0), 1000.0);\
+            vel += (force * timestep)*2.5;\
+            vel = min(max(vel, -1000.0), 10000.0);\
             gl_FragColor = vec4(vel, 0.0, 1.0);\
         }\
     ')
@@ -256,6 +258,7 @@ window.marbling = function () {
         if(bottom.y < 0.0){ b = -curr.y; }\
         \
         \
+        float divergence = 0.5 * (r - l + t - b);\
         gl_FragColor = vec4((-2.0 * gridWidth * density / timestep) * ( \
           (r - l) \
           + \
@@ -344,7 +347,7 @@ window.marbling = function () {
         velocity.bind(1);
         if(interpolation){
             advectionInterpolationShader.uniforms({
-                timestep: 1 / options.timestep,
+                timestep: options.timestep,
                 dissapation_factor: options.dissapation_factor,
                 gridWidth: WIDTH,
                 gridHeight: HEIGHT,
@@ -356,7 +359,7 @@ window.marbling = function () {
         }
         else{
             advectionShader.uniforms({
-                timestep: 1 / options.timestep,
+                timestep: options.timestep,
                 dissapation_factor: options.dissapation_factor,
                 gridWidth: WIDTH,
                 gridHeight: HEIGHT,
@@ -386,7 +389,7 @@ window.marbling = function () {
             curl: options.curl,
             gridWidth: 1 / WIDTH,
             gridHeight: 1 / HEIGHT,
-            timestep: 1 / options.timestep,
+            timestep: options.timestep,
         });
         vorticityShader.draw(mesh, gl.TRIANGLE_STRIP);
     });
@@ -409,7 +412,7 @@ window.marbling = function () {
             density: options.density,
             gridWidth: 1 / WIDTH,
             gridHeight: 1 / HEIGHT,
-            timestep: 1 / options.timestep
+            timestep: options.timestep
         });
         divergenceShader.draw(mesh, gl.TRIANGLE_STRIP);
     });
@@ -435,7 +438,7 @@ window.marbling = function () {
             press_tex: 1,
             dist: 1 / WIDTH,
             density: options.density,
-            timestep: 1 / options.timestep,
+            timestep: options.timestep,
         });
         substractShader.draw(mesh, gl.TRIANGLE_STRIP);
     };
@@ -537,6 +540,14 @@ window.marbling = function () {
         color_tex0.drawTo(setColorShader(0.0, 0.0, 0.0, 0));
     }
 
+    var calculateStep = function (){
+        var currTime = Date.now();
+        var timestep = (currTime - lastFrameTime) / 1000;
+        timestep = Math.min(timestep, 1/options.fps);
+        lastFrameTime = currTime;
+        return timestep;
+    }
+
     function createDownload(fn, url) {
         var temp = document.createElement('a');
         temp.download = fn;
@@ -564,6 +575,7 @@ window.marbling = function () {
     }
 
     gl.onupdate = function () {
+        options.timestep = calculateStep();
         if (options.animate) {
             if (options.advect) {
                 velocity_tex1.drawTo(function () {
@@ -604,14 +616,14 @@ window.marbling = function () {
                     velocity_tex1.drawTo(function () {
                         subtractPressureGradient(velocity_tex0, press_tex0);
                     });
-                    swap = swapTexture(velocity_tex0, velocity_tex1);
-                    velocity_tex0 = swap.t1;
-                    velocity_tex1 = swap.t2;
                 }
 
                 color_tex1.drawTo(function () {
-                    advect(color_tex0, velocity_tex0, options.advection_interpolation);
+                    advect(color_tex0, velocity_tex1, options.advection_interpolation);
                 });
+                swap = swapTexture(velocity_tex0, velocity_tex1);
+                velocity_tex0 = swap.t1;
+                velocity_tex1 = swap.t2;
                 swap = swapTexture(color_tex0, color_tex1);
                 color_tex0 = swap.t1;
                 color_tex1 = swap.t2;
