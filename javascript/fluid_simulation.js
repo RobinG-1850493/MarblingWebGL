@@ -29,7 +29,8 @@ window.marbling = function () {
         timescale: 1.5,
         dissapation_factor: 0.0,
         timestep: 0.0166,
-        fps: 60.0,
+        fps: 144.0,
+        jaccobi_iterations: 20,
         splosch_radius: 0.25,
         splosch_color: [145, 1.0, 1.0, 0.0],
         splosch_multiple: false,
@@ -105,10 +106,10 @@ window.marbling = function () {
       varying vec2 xy; \
       \
       void main() { \
-        float dx = coordinate.x - xy.x; \
-        float dy = coordinate.y - xy.y; \
-        vec4 cur = texture2D(tex, xy); \
-        gl_FragColor = cur + change * exp(-(dx * dx + dy * dy) / radius); \
+        float diff_x = coordinate.x - xy.x; \
+        float diff_y = coordinate.y - xy.y; \
+        vec4 curr = texture2D(tex, xy); \
+        gl_FragColor = curr + change * exp(-(diff_x * diff_x + diff_y * diff_y) / radius); \
       } \
     ');
 
@@ -211,17 +212,17 @@ window.marbling = function () {
             float t = texture2D(curl_tex, top).x;\
             float b = texture2D(curl_tex, bottom).x;\
             \
-            float curr = texture2D(curl_tex, xy).x;\
+            float currentVel = texture2D(curl_tex, xy).x;\
             \
             vec2 force = vec2(abs(t) - abs(b), abs(r) - abs(l));\
-            force /= length(force) + 0.00001;\
-            force *= (curl) * curr;\
-            force.y *= -1.0;\
+            force = force / (length(force) + 0.00001);\
+            force = force * (curl * currentVel);\
+            force.y = force.y * -1.0;\
             \
-            vec2 vel = texture2D(vel_tex, xy).xy;\
-            vel += (force * timestep)*2.5;\
-            vel = min(max(vel, -1000.0), 10000.0);\
-            gl_FragColor = vec4(vel, 0.0, 1.0);\
+            vec2 vorticityVel = texture2D(vel_tex, xy).xy;\
+            vorticityVel += (force * timestep) * 2.5;\
+            vorticityVel = min(max(vorticityVel, -1000.0), 1000.0);\
+            gl_FragColor = vec4(vorticityVel, 0.0, 1.0);\
         }\
     ')
 
@@ -233,10 +234,6 @@ window.marbling = function () {
       uniform sampler2D vel_tex; \
       \
       varying vec2 xy; \
-      \
-      vec2 u(vec2 coord) { \
-        return texture2D(vel_tex, coord).xy; \
-      } \
       \
       void main() { \
       \
@@ -250,20 +247,18 @@ window.marbling = function () {
         float t = texture2D(vel_tex, top).y;\
         float b = texture2D(vel_tex, bottom).y;\
         \
-        vec2 curr = texture2D(vel_tex, xy).xy;\
+        vec2 currentVelocity = texture2D(vel_tex, xy).xy;\
         \
-        if(left.x < 0.0){ l = -curr.x; }\
-        if(right.x > 1.0){ r = -curr.x; }\
-        if(top.y > 1.0){ t = -curr.y; }\
-        if(bottom.y < 0.0){ b = -curr.y; }\
+        if(left.x < 0.0){ l = -currentVelocity.x; }\
+        if(right.x > 1.0){ r = -currentVelocity.x; }\
+        if(top.y > 1.0){ t = -currentVelocity.y; }\
+        if(bottom.y < 0.0){ b = -currentVelocity.y; }\
         \
         \
-        float divergence = 0.5 * (r - l + t - b);\
-        gl_FragColor = vec4((-2.0 * gridWidth * density / timestep) * ( \
-          (r - l) \
-          + \
-          (t - b) \
-        ), 0.0, 0.0, 1.0); \
+        float divergence = (r - l + t - b);\
+        gl_FragColor = vec4(((-2.0 * gridWidth * density) / timestep) \
+            * divergence\
+            , 0.0, 0.0, 1.0); \
       } \
     ');
 
@@ -296,28 +291,34 @@ window.marbling = function () {
     var substractShader = new gl.Shader(vertex, '\
       uniform float timestep; \
       uniform float density; \
-      uniform float dist; \
+      uniform float gridWidth;\
+      uniform float gridHeight;\
       uniform sampler2D vel_tex; \
       uniform sampler2D press_tex; \
       \
       varying vec2 xy; \
       \
-      float p(vec2 coord) { \
-        return texture2D(press_tex, coord).x; \
-      } \
-      \
       void main() { \
+      \
+        vec2 left = xy - vec2(gridWidth, 0.0);\
+        vec2 right = xy + vec2(gridWidth, 0.0);\
+        vec2 top = xy + vec2(0.0, gridHeight);\
+        vec2 bottom = xy - vec2(0.0, gridHeight);\
+      \
+        float l = texture2D(press_tex, left).x;\
+        float r = texture2D(press_tex, right).x;\
+        float t = texture2D(press_tex, top).x;\
+        float b = texture2D(press_tex, bottom).x;\
+        \
         vec2 curr = texture2D(vel_tex, xy).xy; \
         \
-        float diff_p_x = (p(xy + vec2(dist, 0.0)) - \
-                          p(xy - vec2(dist, 0.0))); \
-        float x = curr.x - timestep/(1.0 * density * dist) * diff_p_x; \
+        float x_difference = r - l;\
+        float y_difference = t - b;\
         \
-        float diff_p_y = (p(xy + vec2(0.0, dist)) - \
-                          p(xy - vec2(0.0, dist))); \
-        float y = curr.y - timestep/(1.0 * density * dist) * diff_p_y; \
+        float new_x = curr.x - timestep/(1.0 * density * gridWidth) * x_difference;\
+        float new_y = curr.y - timestep/(1.0 * density * gridHeight) * y_difference;\
         \
-        gl_FragColor = vec4(x, y, 0.0, 0.0); \
+        gl_FragColor = vec4(new_x, new_y, 0.0, 0.0); \
       } \
     ');
 
@@ -436,7 +437,8 @@ window.marbling = function () {
         substractShader.uniforms({
             vel_tex: 0,
             press_tex: 1,
-            dist: 1 / WIDTH,
+            gridWidth: 1 / WIDTH,
+            gridHeight: 1 / HEIGHT,
             density: options.density,
             timestep: options.timestep,
         });
@@ -455,9 +457,10 @@ window.marbling = function () {
         gui.add(options, "vorticity").name("Vorticity").listen();
 
         gui.add(options, "density", 0.1, 2, 0.1).name("Density");
-        gui.add(options, "dissapation_factor", 0.0, 1.0, 0.1).name("Dissapation");
+        gui.add(options, "dissapation_factor", 0.0, 1.0, 0.1).name("Dissipation");
         gui.add(options, "curl", 0.0, 40.0, 1).name("Vorticity");
         gui.add(options, "timescale", 0.25, 2.0, 0.25).name("timescale");
+        gui.add(options, "jaccobi_iterations", 5.0, 40.0, 5.0).name("Jaccobi Iterations");
 
         //gui.add(options, "timestep", 1, 240, 1).name("Time step");
 
@@ -587,7 +590,6 @@ window.marbling = function () {
 
                 if(options.pressure){
                     if(options.vorticity){
-                        console.log("reached");
                         curl_tex0.drawTo(function(){
                             curl(velocity_tex0);
                         });
@@ -604,7 +606,7 @@ window.marbling = function () {
                         divergence(vort_tex0);
                     });
 				
-                    for (var i = 0; i < 10; i++) {
+                    for (var i = 0; i < options.jaccobi_iterations; i++) {
                         press_tex1.drawTo(function () {
                             pressure(div_tex0, press_tex0);
                         });
@@ -618,12 +620,14 @@ window.marbling = function () {
                     });
                 }
 
-                color_tex1.drawTo(function () {
-                    advect(color_tex0, velocity_tex1, options.advection_interpolation);
-                });
                 swap = swapTexture(velocity_tex0, velocity_tex1);
                 velocity_tex0 = swap.t1;
                 velocity_tex1 = swap.t2;
+
+                color_tex1.drawTo(function () {
+                    advect(color_tex0, velocity_tex0, options.advection_interpolation);
+                });
+
                 swap = swapTexture(color_tex0, color_tex1);
                 color_tex0 = swap.t1;
                 color_tex1 = swap.t2;
@@ -661,7 +665,7 @@ window.marbling = function () {
 
     function random_rgba() {
         var o = Math.round, r = Math.random, s = 255;
-        return  [o(r()*s)/510, o(r()*s)/510, o(r()*s)/510];
+        return  [o(r()*s)/1000, o(r()*s)/1000, o(r()*s)/1000];
     }
 
     var addSplosch = function (x, y, offsetX, offsetY) {
@@ -679,7 +683,7 @@ window.marbling = function () {
         velocity_tex1.drawTo(function () {
             splosch(
                 velocity_tex0,
-                [10.0 * x / WIDTH, -10.0 * y / HEIGHT, 0.0, 0.0],
+                [5.0 * x / WIDTH, -5.0 * y / HEIGHT, 0.0, 0.0],
                 [offsetX / WIDTH, 1.0 - offsetY / HEIGHT],
                 options.splosch_radius / 500
             );
