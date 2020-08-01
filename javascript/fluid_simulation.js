@@ -38,6 +38,9 @@ window.marbling = function () {
         splosch_spacing: 0.1,
         velocity_splosch: false,
         rake: false,
+        tapping: false,
+        tapAmount: 5,
+        brushHeight: 250,
         random_amount: 5,
         random_direction: true,
         random_color: false,
@@ -500,6 +503,7 @@ window.marbling = function () {
         }, "screenshot").name("Take screenshot (Shortcut: T)");
 
 
+        gui.add(options, "tapping").name("Tapping effect");
         gui.add(options, "rake").name("Enable Rake");
 
         var rake = gui.addFolder("Rake Options");
@@ -657,7 +661,10 @@ window.marbling = function () {
                 velocitySplosch(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY);
             } else if (options.rake) {
                 rake(rakeOptions.rowCount, rakeOptions.colCount, rakeOptions.rowSpacing, rakeOptions.colSpacing, ev);
-            } else {
+            } else if (options.tapping) {
+                brushTapping(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY, options.tapAmount);
+            }
+            else {
                 addSplosch(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY);
             }
         }
@@ -665,25 +672,31 @@ window.marbling = function () {
 
     function random_rgba() {
         var o = Math.round, r = Math.random, s = 255;
-        return  [o(r()*s)/1000, o(r()*s)/1000, o(r()*s)/1000];
+        return  [o(r()*s)/510, o(r()*s)/510, o(r()*s)/510];
     }
 
-    var addSplosch = function (x, y, offsetX, offsetY) {
-        if (options.random_color) {
-            var randR = getRandom(1, 255);
-            var randG = getRandom(1, 255);
-            var randB = getRandom(1, 255);
+    var addSplosch = function (x, y, offsetX, offsetY, tool = false, newColor = 0) {
+        var color = 0;
+        if(!tool){
+            //console.log("reached");
+            if (options.random_color) {
+                var randR = getRandom(1, 255);
+                var randG = getRandom(1, 255);
+                var randB = getRandom(1, 255);
 
-
-            color = random_rgba();
-            console.log(color);
-        } else {
-            color = [options.splosch_color[0] / 510, options.splosch_color[1] / 510, options.splosch_color[2] / 510]
+                color = random_rgba();
+                // console.log(color);
+            } else {
+                color = [options.splosch_color[0] / 510, options.splosch_color[1] / 510, options.splosch_color[2] / 510];
+            }
+        } else{
+            color = newColor;
         }
+
         velocity_tex1.drawTo(function () {
             splosch(
                 velocity_tex0,
-                [5.0 * x / WIDTH, -5.0 * y / HEIGHT, 0.0, 0.0],
+                [10.0 * x / WIDTH, -10.0 * y / HEIGHT, 0.0, 0.0],
                 [offsetX / WIDTH, 1.0 - offsetY / HEIGHT],
                 options.splosch_radius / 500
             );
@@ -691,7 +704,7 @@ window.marbling = function () {
         color_tex1.drawTo(function () {
             splosch(
                 color_tex0,
-                color.concat([1]),
+                color.concat([0.0]),
                 [offsetX / WIDTH, 1.0 - offsetY / HEIGHT],
                 options.splosch_radius / 500
             );
@@ -720,11 +733,37 @@ window.marbling = function () {
         velocity_tex1 = swap.t2;
     }
 
+
+    var brushTapping = function (x, y, offsetX, offsetY, amount) {
+        var randX = 0, randY = 0, color = 0;
+
+        for(var i = 0; i < amount; i++) {
+            randX = getRandom(-options.brushHeight, options.brushHeight) + offsetX;
+            randY = getRandom(-options.brushHeight, options.brushHeight) + offsetY;
+
+            if (randX < 50){randX = 50;}
+            else if(randX > WIDTH){randX = WIDTH - 50}
+
+            if (randY < 50){randY = 50;}
+            else if(randY > HEIGHT){randY = HEIGHT - 50}
+
+            if(options.random_color){
+                color = random_rgba();
+                addSplosch(x, y, randX, randY, true, color);
+            } else{
+                addSplosch(x, y, randX, randY)
+            }
+
+
+        }
+    }
+
     var randomSplosches = function (amount) {
         var randWidth = 0;
         var randHeight = 0;
         var randXDir = 0;
         var randYDir = 0;
+        var color = 0;
 
         for (var i = 0; i < amount; i++) {
             randWidth = getRandom(50, WIDTH - 50);
@@ -737,8 +776,17 @@ window.marbling = function () {
                 randYDir = getRandom(-4, 4);
             }
 
+            if(options.random_color){
+                color = random_rgba();
+            }
+
             for (var j = 0; j < length; j += 2) {
-                addSplosch(randXDir, randYDir, randWidth + j, randHeight + j);
+                if(options.random_color){
+                    addSplosch(randXDir, randYDir, randWidth + j, randHeight + j, true, color);
+                }
+                else{
+                    addSplosch(randXDir, randYDir, randWidth + j, randHeight + j);
+                }
             }
 
         }
