@@ -26,6 +26,7 @@ window.marbling = function () {
         advection_interpolation: true,
         pressure: true,
         vorticity: true,
+        vorticity_state: true,
         density: 1.0,
         curl: 35.0,
         timescale: 1.5,
@@ -46,9 +47,9 @@ window.marbling = function () {
         random_amount: 5,
         random_direction: true,
         random_color: false,
-        test_constraint: 0.0,
         draw: true,
         select: false,
+        boundaries: true,
         selectdrag: false,
         selectend: false,
         x1Constraint: 0.0,
@@ -58,6 +59,9 @@ window.marbling = function () {
         freeze: false,
         test: false,
         key: -1,
+        flow: 0,
+        flow_factor: 0.1,
+        logging: false,
     }
 
     // rake options
@@ -135,20 +139,62 @@ window.marbling = function () {
       uniform float dissapation_factor;\
       uniform float gridWidth;\
       uniform float gridHeight;\
+      uniform float x1Constraint;\
+      uniform float x2Constraint;\
+      uniform float y1Constraint;\
+      uniform float y2Constraint;\
+      uniform bool boundaries;\
+      uniform bool freeze;\
       uniform sampler2D tex; \
       uniform sampler2D velocity_tex; \
       \
       varying vec2 xy; \
       \
       void main() { \
-        if(xy.x > 0.001 && xy.x < 0.999 && xy.y > 0.001 && xy.y < 0.999){\
-        \
-        vec2 velocity = texture2D(velocity_tex, xy).xy; \
-        \
-        vec2 pastCoord = xy - (timestep * velocity); \
-        float dissapation = 1.0 + dissapation_factor * timestep;\
-        gl_FragColor = texture2D(tex, pastCoord) / dissapation; \
-      }} \
+        if(boundaries){\
+            if(xy.x > 0.001 && xy.x < 0.999 && xy.y > 0.001 && xy.y < 0.999){\
+                if(freeze == true){\
+                    if(xy.x > x1Constraint && xy.x < x2Constraint && xy.y > y2Constraint && xy.y < y1Constraint){\
+                        gl_FragColor = texture2D(tex, xy);\
+                    }\
+                    else{\
+                        vec2 velocity = texture2D(velocity_tex, xy).xy; \
+                    \
+                        vec2 pastCoord = xy - (timestep * velocity); \
+                        float dissapation = 1.0 + dissapation_factor * timestep;\
+                        gl_FragColor = texture2D(tex, pastCoord) / dissapation; \
+                    }\
+                }\
+                else{\
+                    vec2 velocity = texture2D(velocity_tex, xy).xy; \
+                    \
+                    vec2 pastCoord = xy - (timestep * velocity); \
+                    float dissapation = 1.0 + dissapation_factor * timestep;\
+                    gl_FragColor = texture2D(tex, pastCoord) / dissapation; \
+                }\
+            }\
+        }\
+        else {\
+            if(freeze == true){\
+                if(xy.x > x1Constraint && xy.x < x2Constraint && xy.y > y2Constraint && xy.y < y1Constraint){\
+                    gl_FragColor = texture2D(tex, xy);\
+                }\
+                else{\
+                    vec2 velocity = texture2D(velocity_tex, xy).xy; \
+                    \
+                    vec2 pastCoord = xy - (timestep * velocity); \
+                    float dissapation = 1.0 + dissapation_factor * timestep;\
+                    gl_FragColor = texture2D(tex, pastCoord) / dissapation; \
+                }\
+            }\
+           else{\
+                    vec2 velocity = texture2D(velocity_tex, xy).xy; \
+                    \
+                    vec2 pastCoord = xy - (timestep * velocity); \
+                    float dissapation = 1.0 + dissapation_factor * timestep;\
+                    gl_FragColor = texture2D(tex, pastCoord) / dissapation; \
+                }\
+       }}\
     ');
 
     var advectionInterpolationShader = new gl.Shader(vertex, '\
@@ -161,6 +207,7 @@ window.marbling = function () {
       uniform float x2Constraint;\
       uniform float y1Constraint;\
       uniform float y2Constraint;\
+      uniform bool boundaries;\
       uniform bool freeze;\
       uniform sampler2D tex; \
       uniform sampler2D velocity_tex; \
@@ -183,28 +230,53 @@ window.marbling = function () {
       }\
       \
       void main() { \
-      if(xy.x > 0.001 && xy.x < 0.999 && xy.y > 0.001 && xy.y < 0.999){\
+        if(boundaries){\
+            if(xy.x > 0.001 && xy.x < 0.999 && xy.y > 0.001 && xy.y < 0.999){\
+                if(freeze == true){\
+                    if(xy.x > x1Constraint && xy.x < x2Constraint && xy.y > y2Constraint && xy.y < y1Constraint){\
+                        gl_FragColor = texture2D(tex, xy);\
+                    } \
+                    else {\
+                        vec2 gridSize = vec2(1.0/gridWidth, 1.0/gridHeight);\
+                        vec2 u = bilinear_interpolation(velocity_tex, xy).xy;\
+                        vec2 pastCoord = xy - (timeScale * timestep * u);\
+                        float dissapation = 1.0 + dissapation_factor * timestep;\
+                        gl_FragColor = texture2D(tex, pastCoord) / dissapation;\
+                    }\
+                }\
+            else{\
+                vec2 gridSize = vec2(1.0/gridWidth, 1.0/gridHeight);\
+                vec2 u = bilinear_interpolation(velocity_tex, xy).xy; \
+                \
+                vec2 pastCoord = xy - (timeScale * timestep * u); \
+                float dissapation = 1.0 + dissapation_factor * timestep;\
+                gl_FragColor = texture2D(tex, pastCoord) / dissapation;\
+            }\
+        }\
+      }\
+      else{\
         if(freeze == true){\
-        if(xy.x > x1Constraint && xy.x < x2Constraint && xy.y > y2Constraint && xy.y < y1Constraint){\
-        gl_FragColor = texture2D(tex, xy);\
-        } \
-        else {\
+            if(xy.x > x1Constraint && xy.x < x2Constraint && xy.y > y2Constraint && xy.y < y1Constraint){\
+                gl_FragColor = texture2D(tex, xy);\
+                } \
+            else {\
+                vec2 gridSize = vec2(1.0/gridWidth, 1.0/gridHeight);\
+                vec2 u = bilinear_interpolation(velocity_tex, xy).xy;\
+                vec2 pastCoord = fract(xy - (timeScale * timestep * u));\
+                float dissapation = 1.0 + dissapation_factor * timestep;\
+                gl_FragColor = texture2D(tex, pastCoord) / dissapation;\
+            }\
+        }\
+        else{\
             vec2 gridSize = vec2(1.0/gridWidth, 1.0/gridHeight);\
-            vec2 u = bilinear_interpolation(velocity_tex, xy).xy;\
-            vec2 pastCoord = xy - (timeScale * timestep * u);\
+            vec2 u = bilinear_interpolation(velocity_tex, xy).xy; \
+            \
+            vec2 pastCoord = fract(xy - (timeScale * timestep * u)); \
             float dissapation = 1.0 + dissapation_factor * timestep;\
             gl_FragColor = texture2D(tex, pastCoord) / dissapation;\
         }\
-        }\
-        else{\
-        vec2 gridSize = vec2(1.0/gridWidth, 1.0/gridHeight);\
-        vec2 u = bilinear_interpolation(velocity_tex, xy).xy; \
-        \
-        vec2 pastCoord = xy - (timeScale * timestep * u); \
-        float dissapation = 1.0 + dissapation_factor * timestep;\
-        gl_FragColor = texture2D(tex, pastCoord) / dissapation;\
-        }\
-      }} \
+      }\
+    } \
     ');
 
     var curlShader = new gl.Shader(vertex, '\
@@ -270,6 +342,12 @@ window.marbling = function () {
       uniform float density; \
       uniform float gridWidth; \
       uniform float gridHeight; \
+      uniform float x1Constraint;\
+      uniform float x2Constraint;\
+      uniform float y1Constraint;\
+      uniform float y2Constraint;\
+      uniform bool boundaries;\
+      uniform bool freeze;\
       uniform sampler2D vel_tex; \
       \
       varying vec2 xy; \
@@ -286,13 +364,17 @@ window.marbling = function () {
         float t = texture2D(vel_tex, top).y;\
         float b = texture2D(vel_tex, bottom).y;\
         \
-        vec2 currentVelocity = texture2D(vel_tex, xy).xy;\
         \
-        if(left.x < 0.0){ l = -currentVelocity.x; }\
-        if(right.x > 1.0){ r = -currentVelocity.x; }\
-        if(top.y > 1.0){ t = -currentVelocity.y; }\
-        if(bottom.y < 0.0){ b = -currentVelocity.y; }\
-        \
+        if(boundaries){\
+            vec2 currentVelocity = texture2D(vel_tex, xy).xy;\
+            if(left.x < 0.0){ l = -currentVelocity.x; }\
+            if(right.x > 1.0){ r = -currentVelocity.x; }\
+            if(top.y > 1.0){ t = -currentVelocity.y; }\
+            if(bottom.y < 0.0){ b = -currentVelocity.y; }\
+        } else\
+        {\
+        vec2 currentVelocity = texture2D(vel_tex, fract(xy)).xy;\
+        }\
         \
         float divergence = (r - l + t - b);\
         gl_FragColor = vec4(((-2.0 * gridWidth * density) / timestep) \
@@ -303,17 +385,26 @@ window.marbling = function () {
 
     var pressureShader = new gl.Shader(vertex, '\
       uniform float dist;  \
+      uniform bool boundaries; \
       uniform sampler2D div_tex; \
       uniform sampler2D press_tex; \
       \
       varying vec2 xy; \
       \
       float divergence(vec2 coord) { \
-        return texture2D(div_tex, coord).x; \
+        if(boundaries){\
+            return texture2D(div_tex, coord).x;\
+        } else {\
+            return texture2D(div_tex, fract(coord)).x;\
+        }\
       } \
       \
       float pressure(vec2 coord) { \
-        return texture2D(press_tex, coord).x; \
+        if(boundaries){\
+            return texture2D(press_tex, coord).x;\
+        } else {\
+            return texture2D(press_tex, fract(coord)).x;\
+        }\
       } \
       \
       void main() { \
@@ -332,6 +423,7 @@ window.marbling = function () {
       uniform float density; \
       uniform float gridWidth;\
       uniform float gridHeight;\
+      uniform bool boundaries;\
       uniform sampler2D vel_tex; \
       uniform sampler2D press_tex; \
       \
@@ -349,8 +441,11 @@ window.marbling = function () {
         float t = texture2D(press_tex, top).x;\
         float b = texture2D(press_tex, bottom).x;\
         \
-        vec2 curr = texture2D(vel_tex, xy).xy; \
+        vec2 curr = texture2D(vel_tex, fract(xy)).xy;\
         \
+        if(boundaries){\
+            vec2 curr = texture2D(vel_tex, xy).xy; \
+        }\
         float x_difference = r - l;\
         float y_difference = t - b;\
         \
@@ -382,6 +477,33 @@ window.marbling = function () {
         };
     }
 
+    var setFlowShader = function (tex) {
+        var flowShader = new gl.Shader(vertex, '\
+            varying vec2 xy;\
+            uniform float flow_factor;\
+            uniform float direction;\
+            \
+            uniform sampler2D tex; \
+            \
+            void main() {\
+                vec4 test = texture2D(tex, xy);\
+                gl_FragColor = test;\
+            }\
+        \
+        ');
+
+        tex.bind(0);
+
+        flowShader.uniforms({
+            flow_factor: options.flow_factor,
+            tex: 0,
+        });
+
+        return function () {
+            flowShader.draw(mesh, gl.TRIANGLE_STRIP);
+        }
+    }
+
     var advect = function (tex, velocity, interpolation) {
         tex.bind(0);
         velocity.bind(1);
@@ -391,6 +513,7 @@ window.marbling = function () {
                 dissapation_factor: options.dissapation_factor,
                 gridWidth: WIDTH,
                 gridHeight: HEIGHT,
+                boundaries: options.boundaries,
                 x1Constraint: options.x1Constraint,
                 y1Constraint: options.y1Constraint,
                 x2Constraint: options.x2Constraint,
@@ -407,6 +530,12 @@ window.marbling = function () {
                 dissapation_factor: options.dissapation_factor,
                 gridWidth: WIDTH,
                 gridHeight: HEIGHT,
+                boundaries: options.boundaries,
+                x1Constraint: options.x1Constraint,
+                y1Constraint: options.y1Constraint,
+                x2Constraint: options.x2Constraint,
+                y2Constraint: options.y2Constraint,
+                freeze: options.freeze,
                 tex: 0,
                 velocity_tex: 1
             });
@@ -450,10 +579,17 @@ window.marbling = function () {
     });
 
     var divergence = (function (velocity_tex) {
+        if(options.logging) {
+            console.log(options.x1Constraint);
+            console.log(options.x2Constraint);
+            console.log(options.y1Constraint);
+            console.log(options.y2Constraint);
+        }
         velocity_tex.bind(0);
         divergenceShader.uniforms({
             vel_tex: 0,
             density: options.density,
+            boundaries: options.boundaries,
             gridWidth: 1 / WIDTH,
             gridHeight: 1 / HEIGHT,
             timestep: options.timestep
@@ -468,6 +604,7 @@ window.marbling = function () {
             pressureShader.uniforms({
                 div_tex: 0,
                 press_tex: 1,
+                boundaries: options.boundaries,
                 dist: 1 / WIDTH
             });
             pressureShader.draw(mesh, gl.TRIANGLE_STRIP);
@@ -482,6 +619,7 @@ window.marbling = function () {
             press_tex: 1,
             gridWidth: 1 / WIDTH,
             gridHeight: 1 / HEIGHT,
+            boundaries: options.boundaries,
             density: options.density,
             timestep: options.timestep,
         });
@@ -499,15 +637,19 @@ window.marbling = function () {
         gui.add(options, "pressure").name("Pressure (Shortcut: Y)").listen();
         gui.add(options, "vorticity").name("Vorticity").listen();
 
+        /*
         gui.add(options, "draw").name("Draw on cursor").listen();
         gui.add(options, "select").name("Select on cursor").listen();
+         */
 
-        gui.add(options, "density", 0.1, 2, 0.1).name("Density");
-        gui.add(options, "dissapation_factor", 0.0, 1.0, 0.1).name("Dissipation");
-        gui.add(options, "curl", 0.0, 40.0, 1).name("Vorticity");
-        gui.add(options, "timescale", 0.25, 2.0, 0.25).name("timescale");
-        gui.add(options, "jaccobi_iterations", 5.0, 40.0, 5.0).name("Jaccobi Iterations");
-        gui.add(options, "test_constraint", 0.0, 1.0, 0.01).name("Test Constraint");
+        var pipeline = gui.addFolder("Simulation Options");
+
+        pipeline.add(options, "density", 0.1, 2, 0.1).name("Density");
+        pipeline.add(options, "dissapation_factor", 0.0, 1.0, 0.1).name("Dissipation");
+        pipeline.add(options, "curl", 0.0, 40.0, 1).name("Vorticity");
+        pipeline.add(options, "timescale", 0.25, 2.0, 0.25).name("timescale");
+        pipeline.add(options, "jaccobi_iterations", 5.0, 40.0, 5.0).name("Jaccobi Iterations");
+        //gui.add(options, "test_constraint", 0.0, 1.0, 0.01).name("Test Constraint");
 
         //gui.add(options, "timestep", 1, 240, 1).name("Time step");
 
@@ -547,22 +689,27 @@ window.marbling = function () {
         }, "screenshot").name("Take screenshot (Shortcut: T)");
 
 
-        gui.add(options, "tapping").name("Tapping effect");
-        gui.add(options, "rake").name("Enable Rake");
+        var tools = gui.addFolder("Tools");
+        tools.add(options, "tapping").name("Tapping effect");
+        tools.add(options, "rake").name("Enable Rake");
+        tools.add(rakeOptions, "rowCount", 1, 7, 1).name("Rake rows");
+        tools.add(rakeOptions, "colCount", 1, 7, 1).name("Rake columns");
+        tools.add(rakeOptions, "rowSpacing", 50, 500, 25).name("Rake row spacing");
+        tools.add(rakeOptions, "colSpacing", 50, 500, 25).name("Rake column spacing");
 
-        var rake = gui.addFolder("Rake Options");
-        rake.add(rakeOptions, "rowCount", 1, 7, 1).name("Rake rows");
-        rake.add(rakeOptions, "colCount", 1, 7, 1).name("Rake columns");
-        rake.add(rakeOptions, "rowSpacing", 50, 500, 25).name("Rake row spacing");
-        rake.add(rakeOptions, "colSpacing", 50, 500, 25).name("Rake column spacing");
-
+        //var flow = gui.addFolder("Flow Options");
+        //flow.add(options, "flow", {"None": 0, "North": 1, "South": 2}).name("Flow").listen();
+        //flow.add(options, "flow_factor", 0.1, 1.0, 0.1).name("Flow Speed")
+        gui.add(options, "boundaries").name("Boundaries");
     };
 
     var tempX1, tempX2, tempY1, tempY2 = 0;
 
     // Eventlisteners
     document.getElementById("main-body").addEventListener("keypress", function (ev) {
-        console.log(ev.key)
+        if(options.logging){
+            console.log(ev.key)
+        }
         if (ev.key === "p") {
             options.animate = !options.animate;
         }
@@ -585,7 +732,7 @@ window.marbling = function () {
             screenshot();
         }
         if (ev.key === "b") {
-            if(options.freeze){
+            if (options.freeze) {
                 tempX1 = options.x1Constraint;
                 tempX2 = options.x2Constraint;
                 tempY1 = options.y1Constraint;
@@ -597,45 +744,40 @@ window.marbling = function () {
                 options.y2Constraint = 1.0;
 
                 options.freeze = false;
-            }
-            else{
+                if (options.vorticity_state) {
+                    options.vorticity = true;
+                }
+            } else {
                 options.freeze = true;
+                options.vorticity = false;
 
                 options.x1Constraint = tempX1;
                 options.x2Constraint = tempX2;
                 options.y1Constraint = tempY1;
                 options.y2Constraint = tempY2;
             }
-
-            console.log("reached");
-        }
-    })
-
-    document.getElementById("main-body").addEventListener("auxclick", function(ev){
-        if(ev.key == 1){
-            console.log("middle click");
         }
     })
 
     document.getElementById("main-body").addEventListener("keydown", function (ev) {
-        if(ev.key === "c") {
+        if (ev.key === "c") {
             options.selectdrag = true;
-            console.log(options.selectdrag);
+            //console.log(options.selectdrag);
         }
-        if(ev.key === "v") {
+        if (ev.key === "v") {
             options.selectend = true;
-            console.log(options.selectend);
+            //console.log(options.selectend);
         }
     })
 
     document.getElementById("main-body").addEventListener("keyup", function (ev) {
-        if(ev.key === "c") {
+        if (ev.key === "c") {
             options.selectdrag = false;
-            console.log(options.selectdrag);
+            //console.log(options.selectdrag);
         }
-        if(ev.key === "v") {
+        if (ev.key === "v") {
             options.selectend = false;
-            console.log(options.selectend);
+            //console.log(options.selectend);
         }
     })
 
@@ -643,7 +785,9 @@ window.marbling = function () {
 
     var restartSim = function () {
         options.freeze = false;
+
         velocity_tex0.drawTo(setColorShader(0, 0, 0, 1));
+        //velocity_tex0.drawTo(setFlowShader(velocity_tex0));
         color_tex0.drawTo(setColorShader(0.0, 0.0, 0.0, 0));
     }
 
@@ -682,6 +826,12 @@ window.marbling = function () {
     }
 
     gl.onupdate = function () {
+        if(options.flow == 1){
+            velocity_tex1.drawTo(setFlowShader(velocity_tex0));
+            swap = swapTexture(velocity_tex0, velocity_tex1);
+            velocity_tex0 = swap.t1;
+            velocity_tex1 = swap.t2;
+        }
         options.timestep = calculateStep();
         if (options.animate) {
             if (options.advect) {
@@ -751,12 +901,12 @@ window.marbling = function () {
 
     // Splosch functions
     var init = true;
-    var initial = [0.0,0.0,0.0,0.0];
-    var end = [0.0,0.0,0.0,0.0];
+    var initial = [0.0, 0.0, 0.0, 0.0];
+    var end = [0.0, 0.0, 0.0, 0.0];
     var cursorBehaviour = function (ev) {
 
-        console.log(ev.button);
-        if(options.key == 0) {
+        //console.log(ev.button);
+        if (options.key == 0) {
             //var color = [0.001, 0.001, 0.001];
             if (options.draw) {
                 if (ev.dragging) {
@@ -776,16 +926,14 @@ window.marbling = function () {
                 }
             }
         }
-        if(options.key == 2){
-            if(init){
+        if (options.key == 2) {
+            if (init) {
                 initial = [ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY];
                 console.log(initial);
                 init = false;
             }
 
-            console.log("reached");
-
-            if(options.selectend){
+            if (options.selectend) {
                 end = [ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY];
                 createConstraints(initial, end);
 
@@ -796,23 +944,25 @@ window.marbling = function () {
     }
 
 
-    var createConstraints = function (ini, end){
-        console.log(ini);
-        console.log(end);
+    var createConstraints = function (ini, end) {
+        if(options.logging){
+            console.log(ini);
+            console.log(end);
+        }
 
-        options.x1Constraint = ini[2]/WIDTH;
-        options.x2Constraint = end[2]/WIDTH;
+        options.x1Constraint = ini[2] / WIDTH;
+        options.x2Constraint = end[2] / WIDTH;
 
-        if(options.x1Constraint > options.x2Constraint){
+        if (options.x1Constraint > options.x2Constraint) {
             var temp = options.x1Constraint;
             options.x1Constraint = options.x2Constraint;
             options.x2Constraint = temp;
         }
 
-        options.y1Constraint = 1.0 - ini[3]/HEIGHT;
-        options.y2Constraint = 1.0 - end[3]/HEIGHT;
+        options.y1Constraint = 1.0 - ini[3] / HEIGHT;
+        options.y2Constraint = 1.0 - end[3] / HEIGHT;
 
-        if(options.y1Constraint < options.y2Constraint){
+        if (options.y1Constraint < options.y2Constraint) {
             var temp = options.y1Constraint;
             options.y1Constraint = options.y2Constraint;
             options.y2Constraint = temp;
@@ -820,9 +970,18 @@ window.marbling = function () {
 
         options.freeze = true;
 
-        console.log("constraints set");
-        console.log(options.y1Constraint);
-        console.log(options.y2Constraint);
+        if (!vorticity) {
+            options.vorticity_state = false;
+        }
+        options.vorticity = false;
+
+        if(options.logging){
+            console.log("constraints set");
+            console.log(options.x1Constraint);
+            console.log(options.x2Constraint);
+            console.log(options.y1Constraint);
+            console.log(options.y2Constraint);
+        }
     }
 
 
@@ -1009,14 +1168,14 @@ window.marbling = function () {
     }*/
 
     gl.onmousemove = function (mousemoveEvent) {
-        if(options.test){
+        if (options.test) {
             cursorBehaviour(mousemoveEvent);
         }
 
         gl.onmousedown = function (mousedownEvent) {
             options.test = true;
             options.key = mousedownEvent.button;
-            if(options.key == 2){
+            if (options.key == 2) {
                 options.selectdrag = true;
             }
             cursorBehaviour(mousedownEvent);
@@ -1024,8 +1183,7 @@ window.marbling = function () {
 
         gl.onmouseup = function (mouseupEvent) {
             options.test = false;
-            if(mouseupEvent.button == 2){
-                console.log("mouse up");
+            if (mouseupEvent.button == 2) {
                 options.selectdrag = false;
                 options.selectend = true;
                 cursorBehaviour(mouseupEvent);
