@@ -7,6 +7,8 @@ window.marbling = function () {
     gl.canvas.width = marb_canvas.offsetWidth;
     gl.canvas.height = marb_canvas.offsetHeight;
 
+    gl.enable(gl.BLEND);
+
     marb_canvas.oncontextmenu = () => false;
 
     var WIDTH = marb_canvas.offsetWidth;
@@ -62,6 +64,7 @@ window.marbling = function () {
         flow: 0,
         flow_factor: 0.1,
         logging: false,
+        background_color: [0.0, 0.0, 0.0, 1.0],
     }
 
     // rake options
@@ -298,7 +301,7 @@ window.marbling = function () {
             float b = texture2D(vel_tex, bottom).x;\
             \
             float vorticity = r - l - t + b;\
-            gl_FragColor = vec4(0.5 * vorticity, 0.0, 0.0, 1.0);\
+            gl_FragColor = vec4(0.5 * vorticity, 0.0, 0.0, 0.0);\
         }\
     ');
 
@@ -331,9 +334,9 @@ window.marbling = function () {
             force.y = force.y * -1.0;\
             \
             vec2 vorticityVel = texture2D(vel_tex, xy).xy;\
-            vorticityVel += (force * timestep) * 2.5;\
+            vorticityVel += (force * timestep) * 3.0;\
             vorticityVel = min(max(vorticityVel, -1000.0), 1000.0);\
-            gl_FragColor = vec4(vorticityVel, 0.0, 1.0);\
+            gl_FragColor = vec4(vorticityVel, 0.0, 0.0);\
         }\
     ')
 
@@ -379,7 +382,7 @@ window.marbling = function () {
         float divergence = (r - l + t - b);\
         gl_FragColor = vec4(((-2.0 * gridWidth * density) / timestep) \
             * divergence\
-            , 0.0, 0.0, 1.0); \
+            , 0.0, 0.0, 0.0); \
       } \
     ');
 
@@ -414,7 +417,7 @@ window.marbling = function () {
           + pressure(xy - vec2(2.0 * dist, 0.0)) \
           + pressure(xy + vec2(0.0, 2.0 * dist)) \
           + pressure(xy - vec2(0.0, 2.0 * dist)) \
-        ), 0.0, 0.0, 1.0); \
+        ), 0.0, 0.0, 0.0); \
       } \
     ');
 
@@ -579,7 +582,7 @@ window.marbling = function () {
     });
 
     var divergence = (function (velocity_tex) {
-        if(options.logging) {
+        if (options.logging) {
             console.log(options.x1Constraint);
             console.log(options.x2Constraint);
             console.log(options.y1Constraint);
@@ -668,6 +671,11 @@ window.marbling = function () {
             }
         }, "rand").name("Create random splosches (Shortcut: S)");
 
+        var bk_color = gui.addColor(options, "background_color").name("Initial Fluid Color");
+        bk_color.onChange(function () {
+            restartSim();
+        })
+
         gui.add({
             suspend: () => {
                 suspendVelocity();
@@ -692,8 +700,8 @@ window.marbling = function () {
         var tools = gui.addFolder("Tools");
         tools.add(options, "tapping").name("Tapping effect");
         tools.add(options, "rake").name("Enable Rake");
-        tools.add(rakeOptions, "rowCount", 1, 7, 1).name("Rake rows");
-        tools.add(rakeOptions, "colCount", 1, 7, 1).name("Rake columns");
+        tools.add(rakeOptions, "rowCount", 1, 20, 1).name("Rake rows");
+        tools.add(rakeOptions, "colCount", 1, 20, 1).name("Rake columns");
         tools.add(rakeOptions, "rowSpacing", 50, 500, 25).name("Rake row spacing");
         tools.add(rakeOptions, "colSpacing", 50, 500, 25).name("Rake column spacing");
 
@@ -707,7 +715,7 @@ window.marbling = function () {
 
     // Eventlisteners
     document.getElementById("main-body").addEventListener("keypress", function (ev) {
-        if(options.logging){
+        if (options.logging) {
             console.log(ev.key)
         }
         if (ev.key === "p") {
@@ -786,9 +794,9 @@ window.marbling = function () {
     var restartSim = function () {
         options.freeze = false;
 
-        velocity_tex0.drawTo(setColorShader(0, 0, 0, 1));
+        velocity_tex0.drawTo(setColorShader(0, 0, 0, 0));
         //velocity_tex0.drawTo(setFlowShader(velocity_tex0));
-        color_tex0.drawTo(setColorShader(0.0, 0.0, 0.0, 0));
+        color_tex0.drawTo(setColorShader(options.background_color[0]/510, options.background_color[1]/510, options.background_color[2]/510, 1.0));
     }
 
     var calculateStep = function () {
@@ -816,7 +824,7 @@ window.marbling = function () {
     restartSim()
 
     gl.ondraw = function () {
-        gl.clearColor(1, 1, 1, 0);
+        gl.clearColor(1, 1, 1, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT, gl.DEPTH_BUFFER_BIT);
         drawTexture(color_tex0);
     }
@@ -826,7 +834,7 @@ window.marbling = function () {
     }
 
     gl.onupdate = function () {
-        if(options.flow == 1){
+        if (options.flow == 1) {
             velocity_tex1.drawTo(setFlowShader(velocity_tex0));
             swap = swapTexture(velocity_tex0, velocity_tex1);
             velocity_tex0 = swap.t1;
@@ -914,10 +922,10 @@ window.marbling = function () {
                     console.log(ev.deltaY);
                     console.log(ev.offsetX);
                     console.log(ev.offsetY);*/
-                    if (options.velocity_splosch) {
-                        velocitySplosch(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY);
-                    } else if (options.rake) {
+                    if (options.rake) {
                         rake(rakeOptions.rowCount, rakeOptions.colCount, rakeOptions.rowSpacing, rakeOptions.colSpacing, ev);
+                    } else if (options.velocity_splosch) {
+                        velocitySplosch(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY);
                     } else if (options.tapping) {
                         brushTapping(ev.deltaX, ev.deltaY, ev.offsetX, ev.offsetY, options.tapAmount);
                     } else {
@@ -945,7 +953,7 @@ window.marbling = function () {
 
 
     var createConstraints = function (ini, end) {
-        if(options.logging){
+        if (options.logging) {
             console.log(ini);
             console.log(end);
         }
@@ -975,7 +983,7 @@ window.marbling = function () {
         }
         options.vorticity = false;
 
-        if(options.logging){
+        if (options.logging) {
             console.log("constraints set");
             console.log(options.x1Constraint);
             console.log(options.x2Constraint);
@@ -1016,21 +1024,24 @@ window.marbling = function () {
                 options.splosch_radius / 500
             );
         });
-        color_tex1.drawTo(function () {
-            splosch(
-                color_tex0,
-                color.concat([0.0]),
-                [offsetX / WIDTH, 1.0 - offsetY / HEIGHT],
-                options.splosch_radius / 500
-            );
-        });
+
         swap = swapTexture(velocity_tex0, velocity_tex1);
         velocity_tex0 = swap.t1;
         velocity_tex1 = swap.t2;
 
-        swap = swapTexture(color_tex0, color_tex1);
-        color_tex0 = swap.t1;
-        color_tex1 = swap.t2;
+        if(!options.velocity_splosch){
+            color_tex1.drawTo(function () {
+                splosch(
+                    color_tex0,
+                    color.concat([0.0]),
+                    [offsetX / WIDTH, 1.0 - offsetY / HEIGHT],
+                    options.splosch_radius / 500
+                );
+            });
+            swap = swapTexture(color_tex0, color_tex1);
+            color_tex0 = swap.t1;
+            color_tex1 = swap.t2;
+        }
     }
 
     var velocitySplosch = function (x, y, offsetX, offsetY) {
